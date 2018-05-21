@@ -1,11 +1,15 @@
 package main
 
-import "math"
-import "time"
-import "math/rand"
-import "bufio"
-import "os"
-import "github.com/nsf/termbox-go"
+import (
+	"bufio"
+	"flag"
+	"math"
+	"math/rand"
+	"os"
+	"time"
+
+	"github.com/nsf/termbox-go"
+)
 
 func must(e error) {
 	if e != nil {
@@ -83,8 +87,8 @@ func draw(grid [][]renderable) {
 func newSparkFromChar(c *char) *spark {
 	return &spark{
 		char:   c,
-		growth: rand.Float64(),
-		temp:   0,
+		growth: rand.Float64() * CONFIG.growth_scaling,
+		temp:   rand.Float64() * CONFIG.temp_scaling,
 	}
 }
 
@@ -93,7 +97,7 @@ func flameProb(grid [][]renderable, x0, y0 int) float64 {
 	// spontaneously lit alight. Then probability of being
 	// lit alight will be depend on if it's surrounding
 	// cells are on fire.
-	f := 0.04
+	f := CONFIG.spontaneous
 	k := 0
 	D := []int{-1, 0, 1}
 	for _, dx := range D {
@@ -112,7 +116,7 @@ func flameProb(grid [][]renderable, x0, y0 int) float64 {
 			}
 		}
 	}
-	return f * math.Pow(1.54, float64(k))
+	return f * math.Pow(CONFIG.adjacent_factor, float64(k))
 }
 
 func loop(grid [][]renderable, events chan termbox.Event) {
@@ -151,15 +155,31 @@ func loop(grid [][]renderable, events chan termbox.Event) {
 	}
 }
 
+type config struct {
+	spontaneous     float64
+	adjacent_factor float64
+	temp_scaling    float64
+	growth_scaling  float64
+}
+
+var CONFIG *config = &config{
+	spontaneous:     0.04,
+	adjacent_factor: 1.54,
+	temp_scaling:    2.0,
+	growth_scaling:  1.0,
+}
+
 func main() {
-	files := os.Args[1:]
-	if len(files) == 0 {
-		os.Exit(1)
-	}
-	f, err := os.Open(files[0])
-	if err != nil {
-		panic(err)
-	}
+	file := flag.String("f", "", "file to read from")
+	flag.Float64Var(&CONFIG.spontaneous, "sp", CONFIG.spontaneous, "spontaneous combustion probability")
+	flag.Float64Var(&CONFIG.adjacent_factor, "adj", CONFIG.adjacent_factor, "effect of adjacent flames")
+	flag.Float64Var(&CONFIG.temp_scaling, "ts", CONFIG.temp_scaling, "temperature scaling")
+	flag.Float64Var(&CONFIG.growth_scaling, "gs", CONFIG.growth_scaling, "temp growth scaling")
+	flag.Parse()
+
+	f, err := os.Open(*file)
+	must(err)
+
 	rand.Seed(int64(time.Now().Nanosecond()))
 	must(termbox.Init())
 	defer termbox.Close()
@@ -181,8 +201,6 @@ func main() {
 			switch c {
 			case '\t':
 				dx += 3
-			case ' ', '\n':
-				break
 			default:
 				grid[y][x+dx] = &char{
 					r:  c,
