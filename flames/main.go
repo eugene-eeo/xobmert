@@ -97,7 +97,7 @@ func flameProb(grid [][]*char, x0, y0 int) float64 {
 			}
 		}
 	}
-	return f * math.Pow(CONFIG.adjacent_factor, float64(k))
+	return f * math.Pow(CONFIG.adjacent_factor, k)
 }
 
 func loop(grid [][]*char, events chan termbox.Event) {
@@ -131,7 +131,11 @@ func loop(grid [][]*char, events chan termbox.Event) {
 			}
 			must(termbox.Clear(termbox.ColorDefault, termbox.ColorDefault))
 			draw(grid)
-			must(termbox.Flush())
+			if t%100 == 0 {
+				must(termbox.Sync())
+			} else {
+				must(termbox.Flush())
+			}
 		}
 	}
 }
