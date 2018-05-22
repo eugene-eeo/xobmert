@@ -17,22 +17,15 @@ func must(e error) {
 	}
 }
 
-type renderable interface {
-	Style() (termbox.Attribute, termbox.Attribute)
-	Rune() rune
-	Update(t int) bool
-	IsSpark() bool
-}
-
 type char struct {
-	r      rune
-	x, y   int
-	fg, bg termbox.Attribute
+	r       rune
+	x, y    int
+	fg, bg  termbox.Attribute
+	t0      int
+	temp    float64
+	growth  float64
+	burning bool
 }
-
-func (c *char) IsSpark() bool { return false }
-
-func (c *char) Update(i int) bool { return true }
 
 func (c *char) Style() (termbox.Attribute, termbox.Attribute) {
 	return c.fg, c.bg
@@ -42,38 +35,34 @@ func (c *char) Rune() rune {
 	return c.r
 }
 
-type spark struct {
-	*char
-	time   int
-	temp   float64
-	growth float64
-}
-
-func (s *spark) IsSpark() bool { return true }
-
-func (s *spark) Update(t int) bool {
-	// initial update; do nothing on the first tick.
-	if s.time == 0 {
-		s.time = t
+func (c *char) Update(t int) bool {
+	if !c.burning {
 		return true
 	}
 	// approximate some kind of exponential temperature growth,
 	// also update rune so that it looks like the charcater is burning
-	s.temp += s.growth * float64((t-s.time)/2+1)
-	s.r += rune(rand.Intn(10))
-	if s.temp < 5 {
-		s.bg = termbox.ColorYellow
-	} else if s.temp < 10 {
-		s.bg = termbox.ColorRed
-	} else if s.temp < 15 {
-		s.bg = termbox.ColorBlue
+	c.temp += c.growth * float64((t-c.t0)/2+1)
+	c.r += rune(rand.Intn(10))
+	if c.temp < 5 {
+		c.bg = termbox.ColorYellow
+	} else if c.temp < 10 {
+		c.bg = termbox.ColorRed
+	} else if c.temp < 15 {
+		c.bg = termbox.ColorBlue
 	} else {
 		return false
 	}
 	return true
 }
 
-func draw(grid [][]renderable) {
+func (c *char) burn(t int) {
+	c.t0 = t
+	c.burning = true
+	c.growth = rand.Float64() * CONFIG.growth_scaling
+	c.temp = rand.Float64() * CONFIG.temp_scaling
+}
+
+func draw(grid [][]*char) {
 	for y, row := range grid {
 		for x, c := range row {
 			if c != nil {
@@ -84,21 +73,13 @@ func draw(grid [][]renderable) {
 	}
 }
 
-func newSparkFromChar(c *char) *spark {
-	return &spark{
-		char:   c,
-		growth: rand.Float64() * CONFIG.growth_scaling,
-		temp:   rand.Float64() * CONFIG.temp_scaling,
-	}
-}
-
-func flameProb(grid [][]renderable, x0, y0 int) float64 {
+func flameProb(grid [][]*char, x0, y0 int) float64 {
 	// all particles have a resting probability of being
 	// spontaneously lit alight. Then probability of being
 	// lit alight will be depend on if it's surrounding
 	// cells are on fire.
 	f := CONFIG.spontaneous
-	k := 0
+	k := 0.0
 	D := []int{-1, 0, 1}
 	for _, dx := range D {
 		x := x0 + dx
@@ -111,15 +92,15 @@ func flameProb(grid [][]renderable, x0, y0 int) float64 {
 				continue
 			}
 			c := grid[y][x]
-			if c != nil && c.IsSpark() {
-				k += 1
+			if c != nil && c.burning {
+				k += c.temp
 			}
 		}
 	}
 	return f * math.Pow(CONFIG.adjacent_factor, float64(k))
 }
 
-func loop(grid [][]renderable, events chan termbox.Event) {
+func loop(grid [][]*char, events chan termbox.Event) {
 	ticks := time.NewTicker(time.Millisecond * 100)
 	t := 0
 	for {
@@ -135,8 +116,8 @@ func loop(grid [][]renderable, events chan termbox.Event) {
 						continue
 					}
 					stop = false
-					if !c.IsSpark() && rand.Float64() <= flameProb(grid, x, y) {
-						grid[y][x] = newSparkFromChar(c.(*char))
+					if !c.burning && rand.Float64() <= flameProb(grid, x, y) {
+						c.burn(t)
 					}
 					if !c.Update(t) {
 						grid[y][x] = nil
@@ -185,9 +166,9 @@ func main() {
 	defer termbox.Close()
 
 	w, h := termbox.Size()
-	grid := make([][]renderable, h)
+	grid := make([][]*char, h)
 	for i := 0; i < h; i++ {
-		grid[i] = make([]renderable, w)
+		grid[i] = make([]*char, w)
 	}
 
 	r := bufio.NewScanner(f)
